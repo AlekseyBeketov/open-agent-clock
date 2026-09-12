@@ -96,7 +96,7 @@ build_with_go() {
   if [ "$VERSION" != "latest" ]; then
     source_ref="$VERSION"
   fi
-  GOBIN="$TMP_DIR/go-bin" go install "github.com/${REPOSITORY}/cmd/open-agent-clock@${source_ref}"
+  GOBIN="$TMP_DIR/go-bin" GOPROXY=direct go install "github.com/${REPOSITORY}/cmd/open-agent-clock@${source_ref}"
   cp "$TMP_DIR/go-bin/open-agent-clock" "$BINARY"
 }
 
