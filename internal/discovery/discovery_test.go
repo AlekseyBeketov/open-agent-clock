@@ -13,6 +13,7 @@ import (
 func TestNativeAuthReportsIdentityWithoutExposingIt(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	prependFakeExecutable(t, dir, "codex", "codex-cli test")
 	path := filepath.Join(dir, ".codex")
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		t.Fatal(err)
@@ -39,6 +40,7 @@ func TestHermesBindingCanBeDiscoveredFromProfileStore(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("HERMES_HOME", filepath.Join(dir, "profile"))
+	prependFakeExecutable(t, dir, "hermes", "hermes test")
 	if err := os.MkdirAll(filepath.Join(dir, "profile"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +61,20 @@ func TestHermesBindingCanBeDiscoveredFromProfileStore(t *testing.T) {
 	if binding.AuthStore != filepath.Join(dir, "profile", "auth.json") {
 		t.Fatalf("auth store = %q", binding.AuthStore)
 	}
+}
+
+func prependFakeExecutable(t *testing.T, dir, name, version string) {
+	t.Helper()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(binDir, name)
+	contents := "#!/bin/sh\nprintf '%s\\n' '" + version + "'\n"
+	if err := os.WriteFile(path, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestCommandVersionTimesOut(t *testing.T) {
