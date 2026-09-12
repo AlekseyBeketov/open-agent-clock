@@ -1,0 +1,36 @@
+# Local development artifacts
+.DS_Store
+.codegraph/
+
+# Private project notes and research
+.internal/
+
+# OpenSpec planning artifacts are kept private for this project
+.openspec.yaml
+openspec/
+
+# Runtime state, logs, and local configuration
+*.log
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# Node.js
+node_modules/
+dist/
+bin/
+coverage/
+.npm/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# OS/editor files
+.idea/
+.vscode/
