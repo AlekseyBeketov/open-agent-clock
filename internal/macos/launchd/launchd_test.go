@@ -12,7 +12,7 @@ import (
 )
 
 func TestLabelAndIntervalPlistAreDeterministic(t *testing.T) {
-	spec := Spec{ScheduleID: "native/interval", ProgramArguments: []string{"/bin/open-agent-clock", "run", "--once", "--schedule", "native/interval", "--confirm"}, Interval: 5*time.Hour + 3*time.Minute}
+	spec := Spec{ScheduleID: "native/interval", ProgramArguments: []string{"/bin/open-agent-clock", "run", "--once", "--schedule", "native/interval", "--confirm"}, Interval: 5*time.Hour + 3*time.Minute, Environment: map[string]string{"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "HOME": "/Users/test"}}
 	first, err := Generate(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestLabelAndIntervalPlistAreDeterministic(t *testing.T) {
 		t.Fatal("plist generation is not deterministic")
 	}
 	value := string(first)
-	for _, expected := range []string{"com.openagentclock.schedule.native-interval", "ProgramArguments", "StartInterval", "18180"} {
+	for _, expected := range []string{"com.openagentclock.schedule.native-interval", "ProgramArguments", "StartInterval", "18180", "EnvironmentVariables", "/opt/homebrew/bin:/usr/bin:/bin", "/Users/test"} {
 		if !strings.Contains(value, expected) {
 			t.Fatalf("plist missing %q:\n%s", expected, value)
 		}

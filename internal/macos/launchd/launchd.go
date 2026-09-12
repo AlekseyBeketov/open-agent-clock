@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type Spec struct {
 	DailyTimes        []string
 	StandardOutPath   string
 	StandardErrorPath string
+	Environment       map[string]string
 }
 
 type Status struct {
@@ -87,6 +89,7 @@ func Generate(spec Spec) ([]byte, error) {
 		ProgramArguments:  spec.ProgramArguments,
 		StandardOutPath:   spec.StandardOutPath,
 		StandardErrorPath: spec.StandardErrorPath,
+		Environment:       spec.Environment,
 	}
 	if spec.Interval > 0 {
 		seconds := int(spec.Interval / time.Second)
@@ -222,6 +225,7 @@ type plist struct {
 	StartCalendarInterval []calendarInterval `xml:"-"`
 	StandardOutPath       string             `xml:"-"`
 	StandardErrorPath     string             `xml:"-"`
+	Environment           map[string]string  `xml:"-"`
 }
 
 type calendarInterval struct {
@@ -262,6 +266,11 @@ func (value plist) MarshalXML(encoder *xml.Encoder, start xml.StartElement) erro
 	}
 	if value.StandardErrorPath != "" {
 		if err := encodeKeyString(encoder, "StandardErrorPath", value.StandardErrorPath); err != nil {
+			return err
+		}
+	}
+	if len(value.Environment) > 0 {
+		if err := encodeKeyStringDict(encoder, "EnvironmentVariables", value.Environment); err != nil {
 			return err
 		}
 	}
@@ -309,6 +318,26 @@ func encodeKeyInteger(encoder *xml.Encoder, key string, value int) error {
 		return err
 	}
 	return encoder.EncodeElement(value, xml.StartElement{Name: xml.Name{Local: "integer"}})
+}
+
+func encodeKeyStringDict(encoder *xml.Encoder, key string, values map[string]string) error {
+	if err := encodeKey(encoder, key); err != nil {
+		return err
+	}
+	if err := encoder.EncodeToken(xml.StartElement{Name: xml.Name{Local: "dict"}}); err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(values))
+	for valueKey := range values {
+		keys = append(keys, valueKey)
+	}
+	sort.Strings(keys)
+	for _, valueKey := range keys {
+		if err := encodeKeyString(encoder, valueKey, values[valueKey]); err != nil {
+			return err
+		}
+	}
+	return encoder.EncodeToken(xml.EndElement{Name: xml.Name{Local: "dict"}})
 }
 
 func encodeKeyCalendarArray(encoder *xml.Encoder, key string, values []calendarInterval) error {

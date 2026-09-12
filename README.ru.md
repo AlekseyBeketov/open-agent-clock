@@ -31,6 +31,31 @@ Native Codex и Hermes намеренно представлены как раз
 
 **API-key targets не участвуют в usage-window schedules.**
 
+## Prompt и Skill для agent
+
+CLI работает самостоятельно. В репозитории также есть два необязательных файла для пользователей, которые хотят поручить безопасную настройку или управление AI coding agent:
+
+Оба artifact написаны на английском для переносимости, но явно требуют от agent общаться на привычном или выбранном пользователем языке.
+
+- [`prompt/open-agent-clock.md`](prompt/open-agent-clock.md) — готовый setup prompt с правилами consent, credentials и dry-run.
+- [`skill/open-agent-clock/SKILL.md`](skill/open-agent-clock/SKILL.md) — переиспользуемый agent skill для detection, dry-run, активации расписания, управления LaunchAgent и диагностики.
+
+Сначала просмотрите prompt, затем передайте его agent:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/main/prompt/open-agent-clock.md
+```
+
+Установить skill в стандартный каталог agent skills:
+
+```bash
+mkdir -p ~/.agents/skills/open-agent-clock
+curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/main/skill/open-agent-clock/SKILL.md \
+  -o ~/.agents/skills/open-agent-clock/SKILL.md
+```
+
+Если ваш agent использует другой каталог skills, укажите его — например, `~/.codex/skills/open-agent-clock/` для Codex CLI или `~/.hermes/skills/open-agent-clock/` для Hermes. Перед установкой прочитайте файл так же, как вы проверяете `install.sh`.
+
 ## Установка
 
 ### Рекомендуемый способ: одна команда
@@ -52,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/mai
 Требуются macOS и Go 1.27+:
 
 ```bash
-go install github.com/AlekseyBeketov/open-agent-clock/cmd/open-agent-clock@main
+go install github.com/AlekseyBeketov/open-agent-clock/cmd/open-agent-clock@latest
 ```
 
 Открыть пошаговую настройку:
@@ -81,7 +106,7 @@ git clone https://github.com/AlekseyBeketov/open-agent-clock.git && cd open-agen
 go run ./cmd/open-agent-clock detect
 ```
 
-При публикации version tag release workflow создаёт archives для macOS arm64 и amd64. До первого релиза installer использует `go install`, если доступен Go 1.27+. Package-manager distribution запланирована позднее.
+Опубликованные releases содержат checksum-verified archives для macOS arm64 и amd64. Если запрошенного release asset нет, installer может собрать приложение из source при наличии Go 1.27+. Package-manager distribution запланирована позднее.
 
 ## Быстрый старт: пошаговая настройка в терминале
 

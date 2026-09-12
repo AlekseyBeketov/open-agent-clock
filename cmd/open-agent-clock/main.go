@@ -197,6 +197,9 @@ func runOnceCommand(scheduleID string, confirm, jsonOutput bool) error {
 	if !found {
 		return fmt.Errorf("unknown target %q", item.TargetID)
 	}
+	if !binding.Available {
+		return fmt.Errorf("target %q is unavailable: %s", item.TargetID, binding.Reason)
+	}
 	if !domain.IsSubscriptionAuthMode(binding.AuthMode) {
 		return errors.New("usage-window schedules require a subscription/OAuth target; API-key targets are not supported")
 	}
@@ -1009,24 +1012,35 @@ func launchdSpec(paths appconfig.Paths, item domain.Schedule) (launchd.Spec, err
 	if err != nil {
 		return launchd.Spec{}, fmt.Errorf("resolve executable: %w", err)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return launchd.Spec{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+	environment := map[string]string{
+		"HOME": home,
+		"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+	}
+	if hermesHome := strings.TrimSpace(os.Getenv("HERMES_HOME")); hermesHome != "" {
+		environment["HERMES_HOME"] = hermesHome
+	}
 	spec := launchd.Spec{
 		ScheduleID:        item.ID,
 		ProgramArguments:  []string{executable, "tick", "--schedule", item.ID, "--confirm"},
 		StandardOutPath:   filepath.Join(paths.Root, "logs", item.ID+".out.log"),
 		StandardErrorPath: filepath.Join(paths.Root, "logs", item.ID+".err.log"),
+		Environment:       environment,
 	}
 	if item.Mode == domain.ScheduleInterval {
-		interval, err := scheduleengine.ParseInterval(item.Interval)
-		if err != nil {
+		if _, err := scheduleengine.ParseInterval(item.Interval); err != nil {
 			return launchd.Spec{}, err
 		}
-		spec.Interval = interval
-	} else {
-		// launchd calendar triggers use the Mac's local timezone, not the
-		// schedule's IANA timezone. Polling lets tickCommand evaluate the
-		// configured timezone and DST rules in Go before invoking a provider.
-		spec.Interval = time.Minute
 	}
+	// Poll every minute for every mode. Interval schedules are anchored to the
+	// last completed provider run, so a launchd trigger equal to the provider
+	// interval could fire a few seconds too early and skip an entire window.
+	// tickCommand is lightweight and invokes a provider only when the schedule
+	// is due according to the persisted state.
+	spec.Interval = time.Minute
 	return spec, nil
 }
 func removeScheduleCommand(args []string) error {

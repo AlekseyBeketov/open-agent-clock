@@ -31,6 +31,31 @@ Native Codex and Hermes are intentionally separate targets. Two local credential
 
 **API-key targets do not participate in usage-window schedules.**
 
+## Agent prompt and skill
+
+The CLI works on its own. The repository also includes two optional files for users who want an AI coding agent to configure or operate it safely:
+
+Both artifacts are written in English for portability, but explicitly instruct the agent to communicate in the user's usual or preferred language.
+
+- [`prompt/open-agent-clock.md`](prompt/open-agent-clock.md) — a ready-to-paste setup prompt with the project's consent and credential boundaries.
+- [`skill/open-agent-clock/SKILL.md`](skill/open-agent-clock/SKILL.md) — a reusable agent skill for detection, dry-run, schedule activation, LaunchAgent management, and diagnostics.
+
+Preview the prompt before using it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/main/prompt/open-agent-clock.md
+```
+
+Install the skill into a standard agent skills directory:
+
+```bash
+mkdir -p ~/.agents/skills/open-agent-clock
+curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/main/skill/open-agent-clock/SKILL.md \
+  -o ~/.agents/skills/open-agent-clock/SKILL.md
+```
+
+Use your agent's own skills directory when it differs—for example, `~/.codex/skills/open-agent-clock/` for Codex CLI or `~/.hermes/skills/open-agent-clock/` for Hermes. Read the file before installing it, just as you would review `install.sh`.
+
 ## Install
 
 ### Recommended: one command
@@ -52,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/mai
 Requires macOS and Go 1.27+:
 
 ```bash
-go install github.com/AlekseyBeketov/open-agent-clock/cmd/open-agent-clock@main
+go install github.com/AlekseyBeketov/open-agent-clock/cmd/open-agent-clock@latest
 ```
 
 Then open guided setup:
@@ -81,7 +106,7 @@ The binary will be available at `bin/open-agent-clock`.
 go run ./cmd/open-agent-clock detect
 ```
 
-The release workflow produces macOS arm64 and amd64 archives when a version tag is published. Until the first release, the installer falls back to `go install` when Go 1.27+ is available. Package-manager distribution is planned for later.
+Published releases include checksum-verified macOS arm64 and amd64 archives. If a requested release asset does not exist, the installer can fall back to a source build when Go 1.27+ is available. Package-manager distribution is planned for later.
 
 ## Quick start: guided terminal setup
 
