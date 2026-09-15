@@ -36,6 +36,41 @@ func TestNativeAuthReportsIdentityWithoutExposingIt(t *testing.T) {
 	}
 }
 
+func TestNativeCodexDetectsEphemeralCapabilityFromHelp(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	prependFakeExecutableScript(t, dir, "codex", `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' 'codex-cli 1.2.3'
+  exit 0
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
+  printf '%s\n' 'Usage: codex exec [OPTIONS] --ephemeral --sandbox <MODE>'
+  exit 0
+fi
+exit 1
+`)
+	path := filepath.Join(dir, ".codex")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contents, _ := json.Marshal(map[string]any{
+		"auth_mode": "chatgpt",
+		"tokens":    map[string]string{"account_id": "account-secret-id"},
+	})
+	if err := os.WriteFile(filepath.Join(path, "auth.json"), contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	binding := discoverNativeCodex()
+	if binding.Version != "codex-cli 1.2.3" {
+		t.Fatalf("version = %q", binding.Version)
+	}
+	if !binding.Supports(domain.CapabilityEphemeral) {
+		t.Fatalf("ephemeral capability was not detected: %+v", binding.Capabilities)
+	}
+}
+
 func TestHermesBindingCanBeDiscoveredFromProfileStore(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -71,6 +106,19 @@ func prependFakeExecutable(t *testing.T, dir, name, version string) {
 	}
 	path := filepath.Join(binDir, name)
 	contents := "#!/bin/sh\nprintf '%s\\n' '" + version + "'\n"
+	if err := os.WriteFile(path, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func prependFakeExecutableScript(t *testing.T, dir, name, contents string) {
+	t.Helper()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(binDir, name)
 	if err := os.WriteFile(path, []byte(contents), 0o700); err != nil {
 		t.Fatal(err)
 	}

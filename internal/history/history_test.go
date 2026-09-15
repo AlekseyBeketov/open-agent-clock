@@ -1,6 +1,8 @@
 package history
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,5 +28,23 @@ func TestAppendAndListHistoryWithRetention(t *testing.T) {
 	}
 	if len(results) != 2 || !results[0].EndedAt.After(results[1].EndedAt) {
 		t.Fatalf("results = %+v", results)
+	}
+}
+
+func TestListLegacyHistoryMakesTokenUsageUnavailable(t *testing.T) {
+	paths := appconfig.PathsForHome(t.TempDir())
+	if err := os.MkdirAll(paths.History, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contents := []byte(`{"binding_id":"legacy","status":"provider-failed","ended_at":"2026-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(paths.History, "legacy.json"), contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results, err := List(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].TokenUsage == nil || results[0].TokenUsage.Availability != domain.TokenUsageUnavailable {
+		t.Fatalf("legacy history result = %+v", results)
 	}
 }

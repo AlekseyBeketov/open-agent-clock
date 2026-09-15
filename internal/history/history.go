@@ -72,6 +72,7 @@ func List(paths appconfig.Paths) ([]domain.RunResult, error) {
 		if decodeErr := json.Unmarshal(contents, &result); decodeErr != nil {
 			return nil, fmt.Errorf("decode history record: %w", decodeErr)
 		}
+		result.NormalizeTelemetry()
 		results = append(results, result)
 	}
 	sort.Slice(results, func(left, right int) bool { return results[left].EndedAt.After(results[right].EndedAt) })

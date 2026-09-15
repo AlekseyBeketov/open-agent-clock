@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/x/term"
 
@@ -77,6 +78,39 @@ func (cliOperations) SavePreferences(language string, setupCompleted bool) error
 	}
 	cfg.Language = appconfig.NormalizeLanguage(language)
 	cfg.SetupCompleted = setupCompleted
+	return appconfig.SaveConfig(paths, cfg)
+}
+
+func (cliOperations) SaveUpdateSettings(enabled bool, scheduleID string) error {
+	paths, err := appconfig.DefaultPaths()
+	if err != nil {
+		return err
+	}
+	if err := appconfig.Init(paths); err != nil {
+		return err
+	}
+	cfg, err := appconfig.LoadConfig(paths)
+	if err != nil {
+		return err
+	}
+	cfg.Updates.Enabled = enabled
+	cfg.Updates.AlignScheduleID = strings.TrimSpace(scheduleID)
+	return appconfig.SaveConfig(paths, cfg)
+}
+
+func (cliOperations) SaveNotificationSettings(enabled bool) error {
+	paths, err := appconfig.DefaultPaths()
+	if err != nil {
+		return err
+	}
+	if err := appconfig.Init(paths); err != nil {
+		return err
+	}
+	cfg, err := appconfig.LoadConfig(paths)
+	if err != nil {
+		return err
+	}
+	cfg.Notifications.Enabled = enabled
 	return appconfig.SaveConfig(paths, cfg)
 }
 

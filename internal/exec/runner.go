@@ -10,9 +10,13 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AlekseyBeketov/open-agent-clock/internal/redact"
 )
 
-const outputLimit = 8 * 1024
+const OutputLimit = 8 * 1024
+
+const outputTruncationMarker = "\n[output truncated]"
 
 type Result struct {
 	ExitCode *int
@@ -39,8 +43,8 @@ func Run(ctx context.Context, executable string, args []string, timeout time.Dur
 	command.Stdin = nil
 	command.Env = safeEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Stdout = &boundedBuffer{limit: outputLimit}
-	command.Stderr = &boundedBuffer{limit: outputLimit}
+	command.Stdout = &boundedBuffer{limit: OutputLimit}
+	command.Stderr = &boundedBuffer{limit: OutputLimit}
 	command.Cancel = func() error {
 		if command.Process == nil {
 			return nil
@@ -51,8 +55,8 @@ func Run(ctx context.Context, executable string, args []string, timeout time.Dur
 
 	err = command.Run()
 	result := Result{
-		Stdout:   command.Stdout.(*boundedBuffer).String(),
-		Stderr:   command.Stderr.(*boundedBuffer).String(),
+		Stdout:   redact.Text(command.Stdout.(*boundedBuffer).String()),
+		Stderr:   redact.Text(command.Stderr.(*boundedBuffer).String()),
 		TimedOut: errors.Is(runContext.Err(), context.DeadlineExceeded),
 		Err:      err,
 	}
@@ -109,7 +113,14 @@ func (buffer *boundedBuffer) Write(value []byte) (int, error) {
 func (buffer *boundedBuffer) String() string {
 	value := buffer.buffer.String()
 	if buffer.truncated {
-		value += "\n[output truncated]"
+		available := buffer.limit - len(outputTruncationMarker)
+		if available < 0 {
+			available = 0
+		}
+		if len(value) > available {
+			value = value[:available]
+		}
+		value += outputTruncationMarker
 	}
 	return value
 }

@@ -46,6 +46,12 @@ const (
 	IdentityUnknown    IdentityStatus = "unknown"
 )
 
+type Capability string
+
+const (
+	CapabilityEphemeral Capability = "ephemeral"
+)
+
 type ScheduleMode string
 
 const (
@@ -64,8 +70,18 @@ type Binding struct {
 	AuthStore      string           `json:"auth_store,omitempty"`
 	IdentityStatus IdentityStatus   `json:"identity_status"`
 	IdentityHash   string           `json:"identity_hash,omitempty"`
+	Capabilities   []Capability     `json:"capabilities,omitempty"`
 	Available      bool             `json:"available"`
 	Reason         string           `json:"reason,omitempty"`
+}
+
+func (binding Binding) Supports(capability Capability) bool {
+	for _, supported := range binding.Capabilities {
+		if supported == capability {
+			return true
+		}
+	}
+	return false
 }
 
 type Schedule struct {
@@ -104,14 +120,89 @@ type ExecutionPlan struct {
 	SideEffect string   `json:"side_effect"`
 }
 
+// TokenUsageAvailability says whether the provider supplied structured usage
+// counters. The application never estimates these values.
+type TokenUsageAvailability string
+
+const (
+	TokenUsageAvailable   TokenUsageAvailability = "available"
+	TokenUsageUnavailable TokenUsageAvailability = "unavailable"
+)
+
+type TokenUsage struct {
+	Availability      TokenUsageAvailability `json:"availability"`
+	Source            string                 `json:"source,omitempty"`
+	InputTokens       int64                  `json:"input_tokens,omitempty"`
+	CachedInputTokens int64                  `json:"cached_input_tokens,omitempty"`
+	OutputTokens      int64                  `json:"output_tokens,omitempty"`
+	TotalTokens       int64                  `json:"total_tokens,omitempty"`
+}
+
+func UnavailableTokenUsage() *TokenUsage {
+	return &TokenUsage{Availability: TokenUsageUnavailable}
+}
+
+func (usage *TokenUsage) Normalize() {
+	if usage == nil {
+		return
+	}
+	if usage.Availability != TokenUsageAvailable {
+		usage.Availability = TokenUsageUnavailable
+		usage.Source = ""
+		usage.InputTokens = 0
+		usage.CachedInputTokens = 0
+		usage.OutputTokens = 0
+		usage.TotalTokens = 0
+		return
+	}
+	if usage.Source == "" {
+		usage.Source = "provider-reported"
+	}
+}
+
+type DiagnosticCategory string
+
+const (
+	DiagnosticAuth      DiagnosticCategory = "auth"
+	DiagnosticQuota     DiagnosticCategory = "quota"
+	DiagnosticNetwork   DiagnosticCategory = "network"
+	DiagnosticArguments DiagnosticCategory = "arguments"
+	DiagnosticProvider  DiagnosticCategory = "provider"
+	DiagnosticUnknown   DiagnosticCategory = "unknown"
+)
+
+type Diagnostic struct {
+	Category DiagnosticCategory `json:"category"`
+	Detail   string             `json:"detail,omitempty"`
+}
+
 type RunResult struct {
-	BindingID string        `json:"binding_id"`
-	JobID     string        `json:"job_id,omitempty"`
-	StartedAt time.Time     `json:"started_at"`
-	EndedAt   time.Time     `json:"ended_at"`
-	Duration  time.Duration `json:"duration_ns"`
-	Status    string        `json:"status"`
-	ExitCode  *int          `json:"exit_code,omitempty"`
-	Reason    string        `json:"reason,omitempty"`
-	Version   string        `json:"provider_version,omitempty"`
+	BindingID  string        `json:"binding_id"`
+	JobID      string        `json:"job_id,omitempty"`
+	StartedAt  time.Time     `json:"started_at"`
+	EndedAt    time.Time     `json:"ended_at"`
+	Duration   time.Duration `json:"duration_ns"`
+	Status     string        `json:"status"`
+	ExitCode   *int          `json:"exit_code,omitempty"`
+	Reason     string        `json:"reason,omitempty"`
+	Version    string        `json:"provider_version,omitempty"`
+	TokenUsage *TokenUsage   `json:"token_usage,omitempty"`
+	Diagnostic *Diagnostic   `json:"diagnostic,omitempty"`
+}
+
+// NormalizeTelemetry makes legacy records explicit to callers while keeping
+// their original JSON shape readable and migration-free.
+func (result *RunResult) NormalizeTelemetry() {
+	if result.TokenUsage == nil {
+		result.TokenUsage = UnavailableTokenUsage()
+	} else {
+		result.TokenUsage.Normalize()
+	}
+	if result.Diagnostic != nil {
+		switch result.Diagnostic.Category {
+		case DiagnosticAuth, DiagnosticQuota, DiagnosticNetwork, DiagnosticArguments, DiagnosticProvider, DiagnosticUnknown:
+		default:
+			result.Diagnostic.Category = DiagnosticUnknown
+		}
+	}
 }

@@ -13,6 +13,12 @@ Use this skill when a user wants to configure, inspect, test, or operate explici
 - Infer that language from the current conversation when it is clear; ask only when it is genuinely ambiguous.
 - Preserve commands, identifiers, flags, paths, and technical terms exactly when translating the surrounding explanation.
 
+## Tool responsibility
+
+- On supported macOS systems, operate the installed `open-agent-clock` CLI. The skill teaches detection, preview, configuration, scheduling, updates, notifications, and diagnostics; it does not replace the CLI with the current agent's own cron or recurring-task facility.
+- If the host, provider, or execution path is unsupported, state that boundary first. A host-native scheduler may be offered only as a clearly separate fallback and must not be presented as an `open-agent-clock` feature.
+- Describe context reduction narrowly: the CLI controls its prompt, temporary working directory, ephemeral mode where supported, project rules, and optional toolsets. It cannot erase provider-side system prompts, provider-managed history, or guarantee billed-token savings.
+
 ## Safety contract
 
 - Describe the tool as a transparent scheduler or usage-window planner, never as a limit resetter or bypasser.
@@ -22,6 +28,7 @@ Use this skill when a user wants to configure, inspect, test, or operate explici
 - State that a scheduled invocation may consume subscription allowance, fail, or be rejected.
 - Never claim that a run guarantees a server-side reset time, additional capacity, or provider acceptance.
 - Do not automatically retry usage-limit or rate-limit failures.
+- The native Codex plan uses `codex --ask-for-approval never exec --ephemeral --sandbox read-only --skip-git-repo-check hi` because the provider runs in a temporary empty cwd. Only `run --once --confirm --dev` (or `--diagnostic`) adds `--json` before the prompt for JSONL usage; ordinary `run --once`, `tick`, and scheduled `launchd` invocations remain unchanged.
 
 ## Workflow
 
@@ -34,8 +41,10 @@ Use this skill when a user wants to configure, inspect, test, or operate explici
 7. Preview the LaunchAgent with `schedule install --dry-run`.
 8. Install only the selected user-level LaunchAgent after explicit confirmation.
 9. Use `history`, `last-run`, `status`, and `schedule status` for observability.
-10. Pause or uninstall by managed schedule ID; never modify provider credentials.
-11. After any change, report exactly what changed and whether a provider process was invoked.
+10. For provider-reported usage, use only a real confirmed one-off dev run and inspect it with `last-run --dev` or `last-run --diagnostic`.
+11. Do not persist or display raw provider JSONL, prompt, response, stdout, or stderr; absent usage is `availability: unavailable`.
+12. Pause or uninstall by managed schedule ID; never modify provider credentials.
+13. After any change, report exactly what changed and whether a provider process was invoked.
 
 ## Claude boundary
 

@@ -13,7 +13,10 @@ import (
 	"github.com/AlekseyBeketov/open-agent-clock/internal/domain"
 )
 
-const SchemaVersion = 1
+const (
+	LegacySchemaVersion = 1
+	SchemaVersion       = 2
+)
 
 var ErrNotInitialized = errors.New("open-agent-clock is not initialized; run init first")
 
@@ -26,16 +29,41 @@ type Paths struct {
 }
 
 type Config struct {
-	SchemaVersion       int               `json:"schema_version"`
-	Language            string            `json:"language,omitempty"`
-	SetupCompleted      bool              `json:"setup_completed,omitempty"`
-	Schedules           []domain.Schedule `json:"schedules"`
-	ConsentAcknowledged bool              `json:"consent_acknowledged"`
+	SchemaVersion       int                `json:"schema_version"`
+	Language            string             `json:"language,omitempty"`
+	SetupCompleted      bool               `json:"setup_completed,omitempty"`
+	Schedules           []domain.Schedule  `json:"schedules"`
+	ConsentAcknowledged bool               `json:"consent_acknowledged"`
+	Updates             UpdateConfig       `json:"updates"`
+	Notifications       NotificationConfig `json:"notifications"`
+}
+
+type NotificationConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 type State struct {
 	SchemaVersion int                         `json:"schema_version"`
 	LastRuns      map[string]domain.RunResult `json:"last_runs"`
+	Updates       UpdateState                 `json:"updates"`
+}
+
+type UpdateConfig struct {
+	Enabled         bool   `json:"enabled"`
+	AlignScheduleID string `json:"align_schedule_id,omitempty"`
+}
+
+type UpdateState struct {
+	LastResult *UpdateResult `json:"last_result,omitempty"`
+}
+
+type UpdateResult struct {
+	Operation      string    `json:"operation"`
+	Status         string    `json:"status"`
+	CurrentVersion string    `json:"current_version,omitempty"`
+	LatestVersion  string    `json:"latest_version,omitempty"`
+	Reason         string    `json:"reason,omitempty"`
+	RecordedAt     time.Time `json:"recorded_at"`
 }
 
 func DefaultConfig() Config {
@@ -124,8 +152,8 @@ func LoadConfig(paths Paths) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
-	if value.SchemaVersion != SchemaVersion {
-		return Config{}, fmt.Errorf("unsupported config schema version %d", value.SchemaVersion)
+	if err := migrateConfig(&value); err != nil {
+		return Config{}, err
 	}
 	if value.Schedules == nil {
 		value.Schedules = []domain.Schedule{}
@@ -142,18 +170,25 @@ func LoadState(paths Paths) (State, error) {
 		}
 		return State{}, fmt.Errorf("load state: %w", err)
 	}
-	if value.SchemaVersion != SchemaVersion {
-		return State{}, fmt.Errorf("unsupported state schema version %d", value.SchemaVersion)
+	if err := migrateState(&value); err != nil {
+		return State{}, err
 	}
 	if value.LastRuns == nil {
 		value.LastRuns = map[string]domain.RunResult{}
+	}
+	for id, result := range value.LastRuns {
+		result.NormalizeTelemetry()
+		value.LastRuns[id] = result
 	}
 	return value, nil
 }
 
 func SaveConfig(paths Paths, value Config) error {
-	if value.SchemaVersion == 0 {
+	if value.SchemaVersion == 0 || value.SchemaVersion == LegacySchemaVersion {
 		value.SchemaVersion = SchemaVersion
+	}
+	if value.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("unsupported config schema version %d", value.SchemaVersion)
 	}
 	value.Language = NormalizeLanguage(value.Language)
 	return writeJSONAtomic(paths, paths.Config, value)
@@ -167,10 +202,33 @@ func NormalizeLanguage(value string) string {
 }
 
 func SaveState(paths Paths, value State) error {
-	if value.SchemaVersion == 0 {
+	if value.SchemaVersion == 0 || value.SchemaVersion == LegacySchemaVersion {
 		value.SchemaVersion = SchemaVersion
 	}
+	if value.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("unsupported state schema version %d", value.SchemaVersion)
+	}
 	return writeJSONAtomic(paths, paths.State, value)
+}
+
+func migrateConfig(value *Config) error {
+	switch value.SchemaVersion {
+	case LegacySchemaVersion, SchemaVersion:
+		value.SchemaVersion = SchemaVersion
+		return nil
+	default:
+		return fmt.Errorf("unsupported config schema version %d", value.SchemaVersion)
+	}
+}
+
+func migrateState(value *State) error {
+	switch value.SchemaVersion {
+	case LegacySchemaVersion, SchemaVersion:
+		value.SchemaVersion = SchemaVersion
+		return nil
+	default:
+		return fmt.Errorf("unsupported state schema version %d", value.SchemaVersion)
+	}
 }
 
 func UpsertSchedule(value *Config, schedule domain.Schedule) {

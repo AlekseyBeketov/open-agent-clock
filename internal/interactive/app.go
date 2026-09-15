@@ -26,6 +26,18 @@ type Operations interface {
 	Execute(args []string) error
 }
 
+// UpdateSettingsOperations is optional so existing integrations can keep
+// implementing Operations without opting into update configuration prompts.
+type UpdateSettingsOperations interface {
+	SaveUpdateSettings(enabled bool, scheduleID string) error
+}
+
+// NotificationSettingsOperations is optional so existing integrations can keep
+// implementing Operations without opting into notification configuration prompts.
+type NotificationSettingsOperations interface {
+	SaveNotificationSettings(enabled bool) error
+}
+
 type App struct {
 	Prompt Prompter
 	Ops    Operations
@@ -101,10 +113,24 @@ func (app *App) RunSetup() error {
 	if scheduleID == "" {
 		return nil
 	}
+	notificationsEnabled, err := app.configureNotifications()
+	if err != nil {
+		return err
+	}
+	if err := app.configureAutomaticUpdates(scheduleID); err != nil {
+		return err
+	}
 	if err := app.Ops.SavePreferences(app.Lang, true); err != nil {
 		return err
 	}
 	app.line(text(app.Lang, "setup.complete"))
+	if _, ok := app.Ops.(NotificationSettingsOperations); ok {
+		statusKey := "settings.notifications.disabled"
+		if notificationsEnabled {
+			statusKey = "settings.notifications.enabled"
+		}
+		app.line(fmt.Sprintf("%s: %s", text(app.Lang, "settings.notifications"), text(app.Lang, statusKey)))
+	}
 	return nil
 }
 
@@ -530,6 +556,8 @@ func (app *App) runSettingsMenu() error {
 	for {
 		choice, err := app.Prompt.Select(text(app.Lang, "settings.title"), "", []Option{
 			{Label: text(app.Lang, "settings.language"), Value: "language"},
+			{Label: text(app.Lang, "settings.updates"), Value: "updates"},
+			{Label: text(app.Lang, "settings.notifications"), Value: "notifications"},
 			{Label: text(app.Lang, "settings.paths"), Value: "paths"},
 			{Label: text(app.Lang, "main.setup"), Value: "setup"},
 			{Label: text(app.Lang, "common.back"), Value: "back"},
@@ -548,6 +576,14 @@ func (app *App) runSettingsMenu() error {
 			if saveErr := app.Ops.SavePreferences(app.Lang, true); saveErr != nil {
 				return saveErr
 			}
+		case "updates":
+			if updateErr := app.configureAutomaticUpdates(""); updateErr != nil {
+				return updateErr
+			}
+		case "notifications":
+			if _, notificationErr := app.configureNotifications(); notificationErr != nil {
+				return notificationErr
+			}
 		case "paths":
 			app.execute("config")
 		case "setup":
@@ -558,6 +594,84 @@ func (app *App) runSettingsMenu() error {
 			return nil
 		}
 	}
+}
+
+func (app *App) configureNotifications() (bool, error) {
+	operations, ok := app.Ops.(NotificationSettingsOperations)
+	if !ok {
+		return false, nil
+	}
+	snapshot, err := app.Ops.Snapshot()
+	if err != nil {
+		return false, err
+	}
+	enabled, err := app.Prompt.Confirm(
+		text(app.Lang, "settings.notifications.title"),
+		text(app.Lang, "settings.notifications.description"),
+		snapshot.Config.Notifications.Enabled,
+	)
+	if err != nil {
+		return false, app.handleCancellation(err)
+	}
+	if err := operations.SaveNotificationSettings(enabled); err != nil {
+		return false, err
+	}
+	return enabled, nil
+}
+
+func (app *App) configureAutomaticUpdates(preferredScheduleID string) error {
+	operations, ok := app.Ops.(UpdateSettingsOperations)
+	if !ok {
+		return nil
+	}
+	snapshot, err := app.Ops.Snapshot()
+	if err != nil {
+		return err
+	}
+	defaultEnabled := snapshot.Config.Updates.Enabled
+	enabled, err := app.Prompt.Confirm(
+		text(app.Lang, "settings.updates.title"),
+		text(app.Lang, "settings.updates.description"),
+		defaultEnabled,
+	)
+	if err != nil {
+		return app.handleCancellation(err)
+	}
+	if !enabled {
+		return operations.SaveUpdateSettings(false, snapshot.Config.Updates.AlignScheduleID)
+	}
+
+	intervals := make([]domain.Schedule, 0, len(snapshot.Config.Schedules))
+	for _, item := range snapshot.Config.Schedules {
+		if item.Mode == domain.ScheduleInterval {
+			intervals = append(intervals, item)
+		}
+	}
+	if len(intervals) == 0 {
+		app.line(text(app.Lang, "settings.updates.no_interval"))
+		return operations.SaveUpdateSettings(false, "")
+	}
+	options := make([]Option, 0, len(intervals))
+	selected := preferredScheduleID
+	if selected == "" {
+		selected = snapshot.Config.Updates.AlignScheduleID
+	}
+	for _, item := range intervals {
+		options = append(options, Option{Label: fmt.Sprintf("%s — %s", item.Name, item.ID), Value: item.ID})
+	}
+	if !slices.ContainsFunc(intervals, func(item domain.Schedule) bool { return item.ID == selected }) {
+		selected = intervals[0].ID
+	}
+	selected, err = app.Prompt.Select(
+		text(app.Lang, "settings.updates.schedule"),
+		text(app.Lang, "settings.updates.schedule_description"),
+		options,
+		selected,
+	)
+	if err != nil {
+		return app.handleCancellation(err)
+	}
+	return operations.SaveUpdateSettings(true, selected)
 }
 
 func (app *App) chooseLanguage(current string) (string, error) {

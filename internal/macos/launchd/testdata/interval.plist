@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.openagentclock.schedule.native-interval</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/open-agent-clock</string>
+      <string>tick</string>
+      <string>--schedule</string>
+      <string>native/interval</string>
+      <string>--confirm</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>18000</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/example/Library/Application Support/open-agent-clock/logs/native-interval.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/example/Library/Application Support/open-agent-clock/logs/native-interval.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HOME</key>
+      <string>/Users/example</string>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+  </dict>
+</plist>

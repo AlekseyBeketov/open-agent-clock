@@ -54,6 +54,7 @@ func discoverNativeCodex() domain.Binding {
 	}
 	binding.Executable = executable
 	binding.Version = commandVersion(executable)
+	binding.Capabilities = detectCodexCapabilities(executable)
 
 	authPath := filepath.Join(homeDir(), ".codex", "auth.json")
 	binding.AuthStore = authPath
@@ -180,6 +181,31 @@ func commandVersion(executable string) string {
 		}
 	}
 	return "unknown"
+}
+
+func detectCodexCapabilities(executable string) []domain.Capability {
+	// `codex exec --help` is a local, non-interactive capability probe. Do not
+	// infer flag support from a version threshold because Codex distributions
+	// may backport or change flags independently of their version string.
+	result := runner.Run(context.Background(), executable, []string{"exec", "--help"}, discoveryCommandTimeout)
+	if result.Err != nil {
+		return nil
+	}
+	output := result.Stdout + "\n" + result.Stderr
+	if !containsCLIFlag(output, "--ephemeral") {
+		return nil
+	}
+	return []domain.Capability{domain.CapabilityEphemeral}
+}
+
+func containsCLIFlag(output, flag string) bool {
+	for _, token := range strings.Fields(output) {
+		token = strings.Trim(token, "`'\"[](),:")
+		if token == flag || strings.HasPrefix(token, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func homeDir() string {

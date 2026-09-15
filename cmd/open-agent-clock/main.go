@@ -19,13 +19,35 @@ import (
 	"github.com/AlekseyBeketov/open-agent-clock/internal/history"
 	"github.com/AlekseyBeketov/open-agent-clock/internal/lock"
 	"github.com/AlekseyBeketov/open-agent-clock/internal/macos/launchd"
+	"github.com/AlekseyBeketov/open-agent-clock/internal/macos/notification"
 	"github.com/AlekseyBeketov/open-agent-clock/internal/plan"
 	"github.com/AlekseyBeketov/open-agent-clock/internal/provider"
 	"github.com/AlekseyBeketov/open-agent-clock/internal/redact"
 	scheduleengine "github.com/AlekseyBeketov/open-agent-clock/internal/schedule"
+	"github.com/AlekseyBeketov/open-agent-clock/internal/updater"
 )
 
 var version = "dev"
+
+const (
+	updateOperationTimeout       = 30 * time.Second
+	notificationOperationTimeout = notification.DefaultTimeout
+)
+
+type updaterService interface {
+	Check(context.Context, string) (updater.Result, error)
+	Install(context.Context, string, bool) (updater.Result, error)
+}
+
+var newUpdaterService = func() updaterService {
+	return updater.New("")
+}
+
+var runScheduledInvocation = runOnceCommand
+
+var newNotificationNotifier = func() notification.Notifier {
+	return notification.NewNative()
+}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -70,6 +92,8 @@ func run(args []string) error {
 		return initCommand(args[1:])
 	case "config":
 		return configCommand(args[1:])
+	case "update":
+		return updateCommand(args[1:])
 	case "status":
 		return statusCommand(args[1:])
 	case "pause":
@@ -106,6 +130,7 @@ func detectCommand(args []string) error {
 		fmt.Printf("  version: %s\n", valueOrUnknown(binding.Version))
 		fmt.Printf("  auth: %s\n", valueOrUnknown(binding.AuthMode))
 		fmt.Printf("  auth store: %s\n", valueOrUnknown(binding.AuthStore))
+		fmt.Printf("  capabilities: %q\n", binding.Capabilities)
 		fmt.Printf("  identity: %s\n", binding.IdentityStatus)
 		if binding.IdentityHash != "" {
 			fmt.Printf("  identity fingerprint: %s\n", binding.IdentityHash)
@@ -126,6 +151,8 @@ func runCommand(args []string) error {
 	prompt := fs.String("prompt", "hi", "minimal provider prompt")
 	confirm := fs.Bool("confirm", false, "explicitly confirm a real provider invocation")
 	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	devOutput := fs.Bool("dev", false, "enable provider JSONL telemetry for this real run")
+	diagnosticOutput := fs.Bool("diagnostic", false, "alias for --dev")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -133,7 +160,7 @@ func runCommand(args []string) error {
 		if *dryRun {
 			return errors.New("--once and --dry-run cannot be used together")
 		}
-		return runOnceCommand(*scheduleID, *confirm, *jsonOutput)
+		return runOnceCommandMode(*scheduleID, *confirm, *jsonOutput, *devOutput || *diagnosticOutput)
 	}
 	if !*dryRun {
 		return errors.New("provider invocation is fail-closed; use --dry-run or --once --schedule <id> --confirm")
@@ -158,24 +185,29 @@ func runCommand(args []string) error {
 	if err != nil {
 		return err
 	}
+	displayPlan := redactedExecutionPlan(planned)
 	if *jsonOutput {
-		return renderJSON(planned)
+		return renderJSON(displayPlan)
 	}
 	fmt.Println("DRY RUN — provider will not be invoked")
-	fmt.Printf("binding: %s\n", planned.BindingID)
-	fmt.Printf("provider: %s\n", planned.Provider)
-	fmt.Printf("backend: %s\n", planned.Backend)
-	fmt.Printf("executable: %s\n", planned.Executable)
-	fmt.Printf("args: %q\n", planned.Args)
-	fmt.Printf("working directory: %s\n", planned.WorkingDir)
-	fmt.Printf("auth mode: %s\n", valueOrUnknown(planned.AuthMode))
-	fmt.Printf("prompt: %q\n", planned.Prompt)
-	fmt.Printf("timeout: %s\n", planned.Timeout)
-	fmt.Printf("side effect: %s\n", planned.SideEffect)
+	fmt.Printf("binding: %s\n", displayPlan.BindingID)
+	fmt.Printf("provider: %s\n", displayPlan.Provider)
+	fmt.Printf("backend: %s\n", displayPlan.Backend)
+	fmt.Printf("executable: %s\n", displayPlan.Executable)
+	fmt.Printf("args: %q\n", displayPlan.Args)
+	fmt.Printf("working directory: %s\n", displayPlan.WorkingDir)
+	fmt.Printf("auth mode: %s\n", valueOrUnknown(displayPlan.AuthMode))
+	fmt.Printf("prompt: %q\n", displayPlan.Prompt)
+	fmt.Printf("timeout: %s\n", displayPlan.Timeout)
+	fmt.Printf("side effect: %s\n", displayPlan.SideEffect)
 	return nil
 }
 
 func runOnceCommand(scheduleID string, confirm, jsonOutput bool) error {
+	return runOnceCommandMode(scheduleID, confirm, jsonOutput, false)
+}
+
+func runOnceCommandMode(scheduleID string, confirm, jsonOutput, devMode bool) error {
 	if strings.TrimSpace(scheduleID) == "" {
 		return errors.New("--schedule is required with --once")
 	}
@@ -207,19 +239,19 @@ func runOnceCommand(scheduleID string, confirm, jsonOutput bool) error {
 	if err != nil {
 		return err
 	}
-	planned, err := adapter.BuildPlan(binding, item.Prompt)
+	planned, err := buildExecutionPlan(adapter, binding, item.Prompt, devMode)
 	if err != nil {
 		return err
 	}
 	printConsentWarning(jsonOutput)
 	if jsonOutput {
-		fmt.Fprintf(os.Stderr, "confirmed command: %s %q\n", planned.Executable, planned.Args)
+		fmt.Fprintf(os.Stderr, "confirmed command: %s %q\n", planned.Executable, redact.Arguments(planned.Args))
 	} else {
-		fmt.Printf("confirmed command: %s %q\n", planned.Executable, planned.Args)
+		fmt.Printf("confirmed command: %s %q\n", planned.Executable, redact.Arguments(planned.Args))
 	}
 
 	startedAt := time.Now().UTC()
-	result := domain.RunResult{BindingID: binding.ID, JobID: item.ID, StartedAt: startedAt, Version: binding.Version}
+	result := domain.RunResult{BindingID: binding.ID, JobID: item.ID, StartedAt: startedAt, Version: binding.Version, TokenUsage: domain.UnavailableTokenUsage()}
 	jobLock, lockErr := lock.Acquire(filepath.Join(paths.Locks, item.ID+".lock"))
 	if lockErr != nil {
 		if errors.Is(lockErr, lock.ErrAlreadyHeld) {
@@ -248,11 +280,15 @@ func runOnceCommand(scheduleID string, confirm, jsonOutput bool) error {
 	execution := runner.Run(context.Background(), planned.Executable, planned.Args, timeout)
 	result.EndedAt = time.Now().UTC()
 	result.Duration = result.EndedAt.Sub(result.StartedAt)
-	status, reason := adapter.Classify(execution.ExitCode, execution.TimedOut, redact.Text(execution.Stdout), redact.Text(execution.Stderr))
-	result.Status = string(status)
-	result.Reason = redact.Text(reason)
+	observation := adapter.Observe(execution)
+	result.Status = string(observation.Status)
+	result.Reason = observation.Reason
 	result.ExitCode = execution.ExitCode
-	if persistErr := persistRun(paths, &state, result); persistErr != nil {
+	result.TokenUsage = observation.Usage
+	result.Diagnostic = observation.Diagnostic
+	persistErr := persistRun(paths, &state, result)
+	notifyRunCompletion(cfg, item, binding, result)
+	if persistErr != nil {
 		return persistErr
 	}
 	if jsonOutput {
@@ -263,6 +299,9 @@ func runOnceCommand(scheduleID string, confirm, jsonOutput bool) error {
 		fmt.Printf("result: %s\n", result.Status)
 		fmt.Printf("duration: %s\n", result.Duration)
 		fmt.Printf("reason: %s\n", result.Reason)
+		if devMode {
+			printRunDiagnostics(result)
+		}
 	}
 	if result.Status != string(provider.StatusSuccess) {
 		return fmt.Errorf("provider run classified as %s: %s", result.Status, result.Reason)
@@ -278,6 +317,20 @@ func printConsentWarning(jsonOutput bool) {
 	fmt.Fprintln(writer, "WARNING: this invokes an official provider CLI and may consume subscription allowance; it does not guarantee a reset, additional capacity, or acceptance by the provider.")
 }
 
+func buildExecutionPlan(adapter provider.Adapter, binding domain.Binding, prompt string, devMode bool) (domain.ExecutionPlan, error) {
+	if !devMode {
+		return adapter.BuildPlan(binding, prompt)
+	}
+	if modeAdapter, ok := adapter.(interface {
+		BuildPlanForMode(domain.Binding, string, bool) (domain.ExecutionPlan, error)
+	}); ok {
+		return modeAdapter.BuildPlanForMode(binding, prompt, true)
+	}
+	// Preserve compatibility with adapters that only implement the original
+	// plan seam; unsupported dev planning remains a normal invocation.
+	return adapter.BuildPlan(binding, prompt)
+}
+
 func findBinding(id string) (domain.Binding, bool) {
 	for _, binding := range discovery.Discover() {
 		if binding.ID == id {
@@ -288,6 +341,7 @@ func findBinding(id string) (domain.Binding, bool) {
 }
 
 func persistRun(paths appconfig.Paths, _ *appconfig.State, result domain.RunResult) error {
+	result.NormalizeTelemetry()
 	stateLock, err := lock.Acquire(filepath.Join(paths.Locks, "state.lock"))
 	if err != nil {
 		return fmt.Errorf("lock state for update: %w", err)
@@ -307,9 +361,36 @@ func persistRun(paths appconfig.Paths, _ *appconfig.State, result domain.RunResu
 	return history.Append(paths, result, history.DefaultRetention)
 }
 
+func notifyRunCompletion(cfg appconfig.Config, item domain.Schedule, binding domain.Binding, result domain.RunResult) {
+	if !cfg.Notifications.Enabled {
+		return
+	}
+	notifier := newNotificationNotifier()
+	if notifier == nil {
+		fmt.Fprintln(os.Stderr, "completion notification skipped: notifier is not configured")
+		return
+	}
+
+	classification := notification.CompletionFailure
+	if result.Status == string(provider.StatusSuccess) {
+		classification = notification.CompletionSuccess
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), notificationOperationTimeout)
+	defer cancel()
+	if err := notifier.Notify(ctx, notification.Payload{
+		ScheduleID:     item.ID,
+		TargetID:       binding.ID,
+		Classification: classification,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "completion notification failed: %v\n", err)
+	}
+}
+
 func historyCommand(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	devOutput := fs.Bool("dev", false, "show bounded provider telemetry and diagnostics")
+	diagnosticOutput := fs.Bool("diagnostic", false, "show bounded provider telemetry and diagnostics")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -326,6 +407,9 @@ func historyCommand(args []string) error {
 	}
 	for _, result := range results {
 		fmt.Printf("%s schedule=%s target=%s status=%s duration=%s\n", result.EndedAt.Format(time.RFC3339), result.JobID, result.BindingID, result.Status, result.Duration)
+		if *devOutput || *diagnosticOutput {
+			printRunDiagnostics(result)
+		}
 	}
 	if len(results) == 0 {
 		fmt.Println("no run history")
@@ -337,6 +421,8 @@ func lastRunCommand(args []string) error {
 	fs := flag.NewFlagSet("last-run", flag.ContinueOnError)
 	id := fs.String("schedule", "", "schedule id")
 	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	devOutput := fs.Bool("dev", false, "show bounded provider telemetry and diagnostics")
+	diagnosticOutput := fs.Bool("diagnostic", false, "show bounded provider telemetry and diagnostics")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -360,8 +446,37 @@ func lastRunCommand(args []string) error {
 	fmt.Printf("ended: %s\n", result.EndedAt.Format(time.RFC3339))
 	fmt.Printf("duration: %s\n", result.Duration)
 	fmt.Printf("reason: %s\n", result.Reason)
+	if *devOutput || *diagnosticOutput {
+		printRunDiagnostics(result)
+	}
 	return nil
 }
+
+func printRunDiagnostics(result domain.RunResult) {
+	result.NormalizeTelemetry()
+	usage := result.TokenUsage
+	fmt.Printf("token usage: %s\n", usage.Availability)
+	if usage.Availability == domain.TokenUsageAvailable {
+		fmt.Printf("  source: %s\n", valueOrUnknown(usage.Source))
+		fmt.Printf("  input tokens: %d\n", usage.InputTokens)
+		if usage.CachedInputTokens > 0 {
+			fmt.Printf("  cached input tokens: %d\n", usage.CachedInputTokens)
+		}
+		fmt.Printf("  output tokens: %d\n", usage.OutputTokens)
+		if usage.TotalTokens > 0 {
+			fmt.Printf("  total tokens: %d\n", usage.TotalTokens)
+		} else {
+			fmt.Println("  total tokens: unavailable (provider did not report total)")
+		}
+	}
+	if result.Diagnostic == nil {
+		fmt.Println("diagnostic: none")
+		return
+	}
+	fmt.Printf("diagnostic category: %s\n", result.Diagnostic.Category)
+	fmt.Printf("diagnostic detail: %s\n", valueOrUnknown(result.Diagnostic.Detail))
+}
+
 func tickCommand(args []string) error {
 	fs := flag.NewFlagSet("tick", flag.ContinueOnError)
 	id := fs.String("schedule", "", "schedule id")
@@ -394,8 +509,36 @@ func tickCommand(args []string) error {
 		fmt.Printf("schedule %s is not due; next=%s\n", item.ID, next.Format(time.RFC3339))
 		return nil
 	}
-	_ = paths
-	return runOnceCommand(item.ID, *confirm, *jsonOutput)
+	if *confirm {
+		maybeAutomaticUpdate(paths, cfg, item, *jsonOutput)
+	}
+	return runScheduledInvocation(item.ID, *confirm, *jsonOutput)
+}
+
+func maybeAutomaticUpdate(paths appconfig.Paths, cfg appconfig.Config, item domain.Schedule, jsonOutput bool) {
+	if !cfg.Updates.Enabled || cfg.Updates.AlignScheduleID != item.ID {
+		return
+	}
+	service := newUpdaterService()
+	if service == nil {
+		fmt.Fprintln(os.Stderr, "automatic update skipped: updater service is not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), updateOperationTimeout)
+	defer cancel()
+	result, operationErr := service.Install(ctx, version, true)
+	persistErr := persistUpdateResult(paths, result)
+	if jsonOutput {
+		fmt.Fprintf(os.Stderr, "automatic update: %s %s\n", result.Operation, result.Status)
+	} else {
+		fmt.Printf("automatic update: %s\n", result.Status)
+	}
+	if operationErr != nil {
+		fmt.Fprintf(os.Stderr, "automatic update failed: %s\n", result.Reason)
+	}
+	if persistErr != nil {
+		fmt.Fprintf(os.Stderr, "automatic update result was not saved: %v\n", persistErr)
+	}
 }
 
 func scheduleIsDue(item domain.Schedule, now time.Time, lastRun domain.RunResult, hasLastRun bool) bool {
@@ -406,9 +549,19 @@ func scheduleIsDue(item domain.Schedule, now time.Time, lastRun domain.RunResult
 		}
 		anchor := item.StartAt
 		if hasLastRun && !lastRun.EndedAt.IsZero() {
-			anchor = lastRun.EndedAt.Add(interval)
+			anchor = lastRun.EndedAt
 		}
-		return !anchor.After(now)
+		if anchor.IsZero() || now.Before(anchor) {
+			return false
+		}
+		elapsed := now.Sub(anchor)
+		if elapsed < interval {
+			return false
+		}
+		// LaunchAgent polls once per minute. Run only inside the first polling
+		// window after an aligned interval occurrence; older missed runs are
+		// skipped instead of being caught up immediately after resume/wake.
+		return elapsed%interval < time.Minute
 	}
 	location, err := time.LoadLocation(item.Timezone)
 	if err != nil {
@@ -424,7 +577,13 @@ func scheduleIsDue(item domain.Schedule, now time.Time, lastRun domain.RunResult
 			continue
 		}
 		candidate = time.Date(localNow.Year(), localNow.Month(), localNow.Day(), candidate.Hour(), candidate.Minute(), candidate.Second(), 0, location)
-		if !candidate.After(localNow) && (!hasLastRun || lastRun.EndedAt.Before(candidate)) {
+		if candidate.After(localNow) || (hasLastRun && !lastRun.EndedAt.Before(candidate)) {
+			continue
+		}
+		// Calendar triggers and timezone-mismatched daily schedules are
+		// evaluated through a one-minute tick. Do not catch up a calendar
+		// occurrence after the polling window has passed.
+		if localNow.Sub(candidate) <= time.Minute {
 			return true
 		}
 	}
@@ -481,6 +640,192 @@ func configCommand(args []string) error {
 	fmt.Printf("language: %s\n", cfg.Language)
 	fmt.Printf("setup completed: %t\n", cfg.SetupCompleted)
 	fmt.Printf("consent acknowledged: %t\n", cfg.ConsentAcknowledged)
+	return nil
+}
+
+func updateCommand(args []string) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
+		fmt.Println("Usage:")
+		fmt.Println("  open-agent-clock update check [--json]")
+		fmt.Println("  open-agent-clock update install --confirm [--json]")
+		fmt.Println("  open-agent-clock update status [--json]")
+		fmt.Println("  open-agent-clock update disable [--json]")
+		return nil
+	}
+	switch args[0] {
+	case "check":
+		return updateCheckCommand(args[1:])
+	case "install":
+		return updateInstallCommand(args[1:])
+	case "status":
+		return updateStatusCommand(args[1:])
+	case "disable":
+		return updateDisableCommand(args[1:])
+	default:
+		return fmt.Errorf("unknown update command %q", args[0])
+	}
+}
+
+func updateCheckCommand(args []string) error {
+	fs := flag.NewFlagSet("update check", flag.ContinueOnError)
+	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return runUpdateOperation(false, false, *jsonOutput)
+}
+
+func updateInstallCommand(args []string) error {
+	fs := flag.NewFlagSet("update install", flag.ContinueOnError)
+	confirm := fs.Bool("confirm", false, "confirm replacement of the installed executable")
+	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return runUpdateOperation(true, *confirm, *jsonOutput)
+}
+
+func runUpdateOperation(install, confirm, jsonOutput bool) error {
+	paths, _, _, err := loadStore()
+	if err != nil {
+		return err
+	}
+	service := newUpdaterService()
+	if service == nil {
+		return errors.New("updater service is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), updateOperationTimeout)
+	defer cancel()
+	var result updater.Result
+	var operationErr error
+	if install {
+		result, operationErr = service.Install(ctx, version, confirm)
+	} else {
+		result, operationErr = service.Check(ctx, version)
+	}
+
+	persistErr := persistUpdateResult(paths, result)
+	outputErr := renderUpdateResult(result, jsonOutput)
+	if outputErr != nil {
+		return outputErr
+	}
+	if operationErr != nil && persistErr != nil {
+		return fmt.Errorf("%v; save update result: %w", operationErr, persistErr)
+	}
+	if operationErr != nil {
+		return operationErr
+	}
+	return persistErr
+}
+
+func persistUpdateResult(paths appconfig.Paths, result updater.Result) error {
+	stateLock, err := lock.Acquire(filepath.Join(paths.Locks, "state.lock"))
+	if err != nil {
+		return fmt.Errorf("lock state for update result: %w", err)
+	}
+	defer stateLock.Release()
+	state, err := appconfig.LoadState(paths)
+	if err != nil {
+		return err
+	}
+	state.Updates.LastResult = &appconfig.UpdateResult{
+		Operation:      result.Operation,
+		Status:         result.Status,
+		CurrentVersion: result.CurrentVersion,
+		LatestVersion:  result.LatestVersion,
+		Reason:         result.Reason,
+		RecordedAt:     result.RecordedAt,
+	}
+	return appconfig.SaveState(paths, state)
+}
+
+func renderUpdateResult(result updater.Result, jsonOutput bool) error {
+	if jsonOutput {
+		return renderJSON(result)
+	}
+	fmt.Printf("update %s: %s\n", result.Operation, result.Status)
+	fmt.Printf("current version: %s\n", valueOrUnknown(result.CurrentVersion))
+	if result.LatestVersion != "" {
+		fmt.Printf("latest version: %s\n", result.LatestVersion)
+	}
+	if result.Reason != "" {
+		fmt.Printf("reason: %s\n", result.Reason)
+	}
+	return nil
+}
+
+type updateStatus struct {
+	Enabled         bool                    `json:"enabled"`
+	AlignScheduleID string                  `json:"align_schedule_id,omitempty"`
+	CurrentVersion  string                  `json:"current_version"`
+	LastResult      *appconfig.UpdateResult `json:"last_result,omitempty"`
+}
+
+func updateStatusCommand(args []string) error {
+	fs := flag.NewFlagSet("update status", flag.ContinueOnError)
+	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	_, cfg, state, err := loadStore()
+	if err != nil {
+		return err
+	}
+	status := updateStatus{
+		Enabled:         cfg.Updates.Enabled,
+		AlignScheduleID: cfg.Updates.AlignScheduleID,
+		CurrentVersion:  version,
+		LastResult:      state.Updates.LastResult,
+	}
+	if *jsonOutput {
+		return renderJSON(status)
+	}
+	stateValue := "disabled"
+	if status.Enabled {
+		stateValue = "enabled"
+	}
+	fmt.Printf("automatic updates: %s\n", stateValue)
+	fmt.Printf("alignment schedule: %s\n", valueOrUnknown(status.AlignScheduleID))
+	fmt.Printf("current version: %s\n", valueOrUnknown(status.CurrentVersion))
+	if status.LastResult == nil {
+		fmt.Println("last result: none")
+	} else {
+		fmt.Printf("last result: %s %s at %s\n", status.LastResult.Operation, status.LastResult.Status, status.LastResult.RecordedAt.Format(time.RFC3339))
+		if status.LastResult.Reason != "" {
+			fmt.Printf("  reason: %s\n", status.LastResult.Reason)
+		}
+	}
+	return nil
+}
+
+func updateDisableCommand(args []string) error {
+	fs := flag.NewFlagSet("update disable", flag.ContinueOnError)
+	jsonOutput := fs.Bool("json", false, "render machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	paths, _, _, err := loadStore()
+	if err != nil {
+		return err
+	}
+	configLock, err := lock.Acquire(filepath.Join(paths.Locks, "config.lock"))
+	if err != nil {
+		return err
+	}
+	defer configLock.Release()
+	cfg, err := appconfig.LoadConfig(paths)
+	if err != nil {
+		return err
+	}
+	cfg.Updates.Enabled = false
+	if err := appconfig.SaveConfig(paths, cfg); err != nil {
+		return err
+	}
+	status := updateStatus{Enabled: false, AlignScheduleID: cfg.Updates.AlignScheduleID, CurrentVersion: version}
+	if *jsonOutput {
+		return renderJSON(status)
+	}
+	fmt.Printf("automatic updates disabled; alignment schedule retained: %s\n", valueOrUnknown(status.AlignScheduleID))
 	return nil
 }
 
@@ -1030,17 +1375,37 @@ func launchdSpec(paths appconfig.Paths, item domain.Schedule) (launchd.Spec, err
 		StandardErrorPath: filepath.Join(paths.Root, "logs", item.ID+".err.log"),
 		Environment:       environment,
 	}
-	if item.Mode == domain.ScheduleInterval {
-		if _, err := scheduleengine.ParseInterval(item.Interval); err != nil {
+	if err := scheduleengine.Validate(item); err != nil {
+		return launchd.Spec{}, err
+	}
+	switch item.Mode {
+	case domain.ScheduleInterval:
+		interval, err := scheduleengine.ParseInterval(item.Interval)
+		if err != nil {
 			return launchd.Spec{}, err
 		}
+		if interval < time.Minute {
+			return launchd.Spec{}, errors.New("launchd interval schedules require an interval of at least one minute")
+		}
+		// Poll every minute. Interval schedules are anchored to the last
+		// completed provider run, so a launchd trigger equal to the provider
+		// interval could fire a few seconds too early and skip an entire window.
+		// tickCommand invokes a provider only when the schedule is due according
+		// to the persisted state.
+		spec.Interval = time.Minute
+	case domain.ScheduleDaily:
+		// StartCalendarInterval has no timezone field and launchd evaluates it
+		// in the macOS system timezone. Use the native calendar trigger only
+		// when it represents the configured IANA timezone exactly; otherwise
+		// retain timezone-aware behavior through the aligned one-minute poll.
+		if item.Timezone == appconfig.SystemTimezone() {
+			spec.DailyTimes = append([]string(nil), item.Times...)
+		} else {
+			spec.Interval = time.Minute
+		}
+	default:
+		return launchd.Spec{}, fmt.Errorf("unsupported schedule mode %q", item.Mode)
 	}
-	// Poll every minute for every mode. Interval schedules are anchored to the
-	// last completed provider run, so a launchd trigger equal to the provider
-	// interval could fire a few seconds too early and skip an entire window.
-	// tickCommand is lightweight and invokes a provider only when the schedule
-	// is due according to the persisted state.
-	spec.Interval = time.Minute
 	return spec, nil
 }
 func removeScheduleCommand(args []string) error {
@@ -1134,9 +1499,18 @@ func splitCSV(value string) []string {
 }
 
 func renderJSON(value any) error {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
+	contents, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, redact.Text(string(contents)))
+	return err
+}
+
+func redactedExecutionPlan(value domain.ExecutionPlan) domain.ExecutionPlan {
+	value.Args = redact.Arguments(value.Args)
+	value.Prompt = redact.Text(value.Prompt)
+	return value
 }
 
 func valueOrUnknown(value string) string {
@@ -1156,6 +1530,10 @@ func printHelp() {
 	fmt.Println("  open-agent-clock init")
 	fmt.Println("  open-agent-clock detect [--json]")
 	fmt.Println("  open-agent-clock config [--json]")
+	fmt.Println("  open-agent-clock update check [--json]")
+	fmt.Println("  open-agent-clock update install --confirm [--json]")
+	fmt.Println("  open-agent-clock update status [--json]")
+	fmt.Println("  open-agent-clock update disable [--json]")
 	fmt.Println("  open-agent-clock status [--json]")
 	fmt.Println("  open-agent-clock schedule add --id <id> --target <binding> [options]")
 	fmt.Println("  open-agent-clock schedule update --id <id> [options]")
@@ -1167,10 +1545,10 @@ func printHelp() {
 	fmt.Println("  open-agent-clock pause --id <id>")
 	fmt.Println("  open-agent-clock resume --id <id> --confirm")
 	fmt.Println("  open-agent-clock run --dry-run --target <binding> [--prompt hi] [--json]")
-	fmt.Println("  open-agent-clock run --once --schedule <id> --confirm [--json]")
+	fmt.Println("  open-agent-clock run --once --schedule <id> --confirm [--dev|--diagnostic] [--json]")
 	fmt.Println("  open-agent-clock tick --schedule <id> --confirm [--json]")
-	fmt.Println("  open-agent-clock history [--json]")
-	fmt.Println("  open-agent-clock last-run --schedule <id> [--json]")
+	fmt.Println("  open-agent-clock history [--json] [--dev|--diagnostic]")
+	fmt.Println("  open-agent-clock last-run --schedule <id> [--json] [--dev|--diagnostic]")
 	fmt.Println("  open-agent-clock version")
 	fmt.Println()
 	fmt.Println("Targets are discovered independently: native-codex and hermes-codex.")

@@ -37,7 +37,8 @@ CLI работает самостоятельно. В репозитории т�
 
 Оба artifact написаны на английском для переносимости, но явно требуют от agent общаться на привычном или выбранном пользователем языке.
 
-- [`prompt/open-agent-clock.md`](prompt/open-agent-clock.md) — готовый setup prompt с правилами consent, credentials и dry-run.
+> **Открыть canonical prompt:** [`prompt/open-agent-clock.md`](prompt/open-agent-clock.md). Полный текст намеренно находится в отдельном файле и не занимает экран README.
+
 - [`skill/open-agent-clock/SKILL.md`](skill/open-agent-clock/SKILL.md) — переиспользуемый agent skill для detection, dry-run, активации расписания, управления LaunchAgent и диагностики.
 
 Сначала просмотрите prompt, затем передайте его agent:
@@ -55,6 +56,12 @@ curl -fsSL https://raw.githubusercontent.com/AlekseyBeketov/open-agent-clock/mai
 ```
 
 Если ваш agent использует другой каталог skills, укажите его — например, `~/.codex/skills/open-agent-clock/` для Codex CLI или `~/.hermes/skills/open-agent-clock/` для Hermes. Перед установкой прочитайте файл так же, как вы проверяете `install.sh`.
+
+### Границы context и token usage
+
+`open-agent-clock` минимизирует **локальный invocation context**: default prompt содержит только `hi`, provider processes запускаются во временной пустой рабочей директории, native Codex получает `--ephemeral`, когда установленный CLI поддерживает этот flag, а Hermes работает в one-shot режиме без project rules и optional toolsets. Поэтому вызов, построенный инструментом, не прикладывает этот repository, предыдущую interactive conversation или несвязанные agent skills.
+
+Инструмент **не** сбрасывает и не стирает встроенный system prompt provider CLI, provider-managed metadata или историю вне гарантий документированных flags этого CLI. Он также не может сбросить usage window или гарантировать конкретное уменьшение context window либо billed tokens. Команда `run --dry-run` показывает ровно ту часть вызова, которую контролирует инструмент.
 
 ## Установка
 
@@ -107,6 +114,27 @@ go run ./cmd/open-agent-clock detect
 ```
 
 Опубликованные releases содержат checksum-verified archives для macOS arm64 и amd64. Если запрошенного release asset нет, installer может собрать приложение из source при наличии Go 1.27+. Package-manager distribution запланирована позднее.
+
+## Обновления
+
+Проверить release metadata без изменения бинарника, посмотреть состояние auto-update или явно установить update:
+
+```bash
+open-agent-clock update check
+open-agent-clock update status
+open-agent-clock update install --confirm
+open-agent-clock update disable
+```
+
+Interactive setup и **Settings → Automatic updates** предлагают opt-in после создания interval schedule. Включение привязывает одну попытку обновления к существующим cadence и phase этого расписания; второй timer не создаётся. Непосредственно перед подтверждённым due tick инструмент выполняет не более одной bounded attempt, сохраняет non-secret result и продолжает provider tick даже при ошибке обновления. По умолчанию обновления выключены, включая migrated configurations.
+
+Установка разрешена только для released semantic versions и напрямую управляемых writable macOS binaries. Updater выбирает точный asset для `darwin` architecture, обязательно требует `checksums.txt`, проверяет SHA-256 до extraction, отклоняет links и unsafe archive paths, создаёт staged executable в том же каталоге и заменяет бинарник атомарно. Development builds, package-manager paths, отсутствие checksums, повреждённые archives, network failures и unwritable directories завершаются fail-closed без замены рабочего бинарника. `sudo` не используется, retry loop внутри одного occurrence не выполняется.
+
+## macOS-уведомления о завершении
+
+Guided setup и **Settings → Completion notifications** предлагают явный opt-in; по умолчанию уведомления выключены, включая migrated configurations. Отключить их можно позднее через тот же пункт Settings.
+
+После завершения реального provider attempt инструмент делает не более одного bounded best-effort запроса через встроенный macOS `/usr/bin/osascript`. Уведомление содержит только ID управляемого расписания, target ID и classification `success`/`failure`. В нём никогда нет prompt, credentials, provider stdout/stderr или diagnostic reason. macOS может запросить разрешение либо подавить доставку согласно System Settings и Focus. Ошибка доставки выводится в stderr, но не меняет сохранённый provider result и никогда не повторяет provider invocation.
 
 ## Быстрый старт: пошаговая настройка в терминале
 
@@ -187,6 +215,17 @@ open-agent-clock schedule add \
 
 Расписания учитывают timezone и используют IANA timezone names. Пропущенные `launchd`-запуски пропускаются и автоматически не догоняются.
 
+### Materialization trigger в launchd и ограничения
+
+- Interval schedules материализуются как минутный polling trigger через `StartInterval`. Команда `tick` применяет заданный interval от начала расписания или последнего завершённого запуска, поэтому загрузка LaunchAgent не сдвигает anchor интервала.
+- Morning/custom daily schedules используют native `StartCalendarInterval`, когда их IANA timezone совпадает с системным timezone macOS.
+- У `StartCalendarInterval` нет поля timezone. Для daily schedule в другом IANA timezone CLI использует тот же минутный polling trigger и сам вычисляет заданный timezone, вместо тихого запуска в неправильное локальное время.
+- Interval короче одной минуты нельзя материализовать для launchd: `schedule install` отклонит его. Один plist не может одновременно содержать interval и calendar triggers.
+
+### Официальная альтернатива scheduling в Claude
+
+`claude-subscription` остаётся fail-closed: проект пока не подтвердил minimal local execution contract для Claude subscription, соответствующий его требованиям безопасности. Нельзя подменять его API-key или `--bare` fallback. Официальные варианты Claude Code являются отдельными механизмами: `/schedule` создаёт persistent cloud Routine, Claude Desktop — persistent local scheduled task, а `/loop` работает только пока открыта CLI session (либо она восстановлена до истечения задачи). Выбирайте их напрямую, если подходят execution location, доступ к repository, permissions и persistence; они не являются bindings `open-agent-clock`.
+
 ## Preview и запуск
 
 Preview target без запуска provider process:
@@ -196,11 +235,21 @@ open-agent-clock run --dry-run --target native-codex --prompt hi
 open-agent-clock run --dry-run --target hermes-codex --prompt hi --json
 ```
 
-Однократный запуск конкретного расписания:
+Однократный запуск конкретного расписания через обычный scheduled invocation path:
 
 ```bash
 open-agent-clock run --once --schedule codex-window --confirm
 ```
+
+Только для реального явно подтверждённого development/diagnostic запуска добавьте `--dev` (или alias `--diagnostic`). Тогда native Codex получает JSONL mode, и adapter может извлечь provider-reported usage; обычная команда выше и invocations через `launchd`/`tick` не получают `--json`:
+
+```bash
+open-agent-clock run --once --schedule codex-window --confirm --dev
+open-agent-clock run --once --schedule codex-window --confirm --diagnostic
+open-agent-clock last-run --schedule codex-window --dev
+```
+
+Для native Codex dry-run планирует точную команду `codex --ask-for-approval never exec --ephemeral --sandbox read-only --skip-git-repo-check hi`; dev mode добавляет `--json` непосредственно перед `hi`. Trusted-directory flag нужен, потому что provider process запускается во временной пустой рабочей директории.
 
 Foreground/debug tick:
 
@@ -209,6 +258,21 @@ open-agent-clock tick --schedule codex-window --confirm
 ```
 
 Каждый реальный provider invocation ограничен timeout и output limit, запускается во временной изолированной рабочей директории и не повторяется автоматически после usage-limit error.
+
+## Telemetry и диагностика
+
+Счётчики токенов сохраняются только если adapter провайдера получил structured provider-reported usage metadata. Поле помечено `provider-reported`; `availability: unavailable` означает, что provider не предоставил поддерживаемый usage envelope. Native Codex dev JSONL usage включает `input_tokens`, необязательный `cached_input_tokens`, `output_tokens` и `total_tokens`. Инструмент никогда не оценивает токены по длине prompt, символам, словам или local timing.
+
+Для automation используйте structured JSON, а для человека явно включайте bounded diagnostics:
+
+```bash
+open-agent-clock history --json
+open-agent-clock history --diagnostic
+open-agent-clock last-run --schedule codex-window --json
+open-agent-clock last-run --schedule codex-window --diagnostic
+```
+
+Диагностика использует стабильные категории: `auth`, `quota`, `network`, `arguments`, `provider` и `unknown`. Detail короткий, redacted и bounded. Приложение не сохраняет и не выводит полные prompts, responses, credentials или raw/unbounded provider stdout/stderr. Legacy history и state загружаются успешно, а token usage показывается как unavailable.
 
 ## macOS launchd
 
@@ -269,6 +333,25 @@ History хранит только redacted metadata: timestamps, duration, statu
 
 В каталоге находятся локальные configuration, state, history и generated runtime files. Где применимо, файлы создаются с user-only permissions.
 
+## Удаление
+
+Сначала выгрузите каждое управляемое расписание из `open-agent-clock schedule status`:
+
+```bash
+open-agent-clock schedule uninstall --id <schedule-id> --confirm
+```
+
+Затем удалите установленный бинарник. Удаляйте `~/Library/Application Support/open-agent-clock/` отдельно, только если хотите также стереть локальную configuration и redacted history. Инструмент не удаляет чужие LaunchAgents.
+
+## Решение проблем
+
+- **Команда не найдена:** добавьте `~/.local/bin` (или `$(go env GOPATH)/bin` при `go install`) в `PATH`.
+- **Targets не обнаружены:** сначала авторизуйтесь через официальный CLI провайдера, затем запустите `open-agent-clock detect`; инструмент не запрашивает и не копирует credentials.
+- **Расписание не запускается:** проверьте `open-agent-clock status`, `open-agent-clock schedule status` и `open-agent-clock last-run --schedule <id>`; убедитесь, что расписание включено, а его управляемый LaunchAgent загружен.
+- **Запуск пропущен:** пересекающиеся invocations и пропущенные polling windows намеренно пропускаются без catch-up и retry.
+- **Провайдер отклонил запрос:** изучите redacted status/history и используйте CLI провайдера для диагностики аккаунта. Локальный scheduled invocation не гарантирует capacity или server-side reset окна использования.
+- **Неожиданное поведение timezone:** проверьте настроенную IANA timezone. Daily schedules вне системной timezone Mac используют timezone-aware polling раз в минуту.
+
 ## Разработка
 
 ```bash
@@ -284,9 +367,12 @@ GitHub Actions также выполняет formatting, vet, tests и build.
 
 MVP реализован и проходит active hardening. Доступны native Codex и Hermes execution paths, расписания, history, dry-run, locking и guarded LaunchAgent integration. Реальные provider smoke tests намеренно не запускаются автоматически, поскольку они могут расходовать subscription allowance.
 
+Будущие идеи, пока не запланированные к реализации, записаны в [`ROADMAP.md`](ROADMAP.md).
+
 ## Ссылки
 
 - [OpenAI Codex non-interactive CLI](https://developers.openai.com/codex/noninteractive)
 - [OpenAI Codex CLI reference](https://developers.openai.com/codex/cli/reference)
 - [Claude Code headless mode](https://docs.anthropic.com/en/docs/claude-code/headless)
+- [Claude Code scheduled tasks и `/schedule`](https://code.claude.com/docs/en/scheduled-tasks)
 - [GitHub: About repository README files](https://docs.github.com/en/repositories/creating-and-managing-repositories/customizing-your-repository/about-readmes)
