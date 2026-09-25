@@ -28,7 +28,7 @@ func TestNativeCodexAdapterRunsDiscoveredFakeProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedArgs := []string{"--ask-for-approval", "never", "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "native integration prompt"}
+	expectedArgs := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="minimal"`, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "native integration prompt"}
 	if !reflect.DeepEqual(planned.Args, expectedArgs) {
 		t.Fatalf("native plan args = %#v, want %#v", planned.Args, expectedArgs)
 	}

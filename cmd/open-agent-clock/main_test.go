@@ -17,27 +17,30 @@ import (
 	"github.com/AlekseyBeketov/open-agent-clock/internal/updater"
 )
 
-func TestIntervalScheduleDueUsesAlignedPollingWindow(t *testing.T) {
+func TestIntervalScheduleDueUsesElapsedTimeFromAnchor(t *testing.T) {
 	start := time.Date(2026, time.September, 12, 6, 44, 0, 0, time.UTC)
 	item := domain.Schedule{Mode: domain.ScheduleInterval, Interval: "5h3m", StartAt: start}
 
 	if scheduleIsDue(item, start.Add(2*time.Hour), domain.RunResult{}, false) {
 		t.Fatal("schedule became due before the first interval elapsed")
 	}
-	if !scheduleIsDue(item, start.Add(5*time.Hour+3*time.Minute+30*time.Second), domain.RunResult{}, false) {
-		t.Fatal("schedule was not due inside the aligned polling window")
-	}
-	if scheduleIsDue(item, start.Add(5*time.Hour+5*time.Minute), domain.RunResult{}, false) {
-		t.Fatal("missed interval was caught up outside the polling window")
+	lateInvocation := start.Add(5*time.Hour + 5*time.Minute)
+	if !scheduleIsDue(item, lateInvocation, domain.RunResult{}, false) {
+		t.Fatal("missed interval was not due after the interval elapsed")
 	}
 
 	lastRun := domain.RunResult{EndedAt: start.Add(10 * time.Minute)}
 	if !scheduleIsDue(item, lastRun.EndedAt.Add(5*time.Hour+3*time.Minute+20*time.Second), lastRun, true) {
 		t.Fatal("schedule was not due after the interval from the last completed run")
 	}
+
+	completedRun := domain.RunResult{EndedAt: lateInvocation.Add(30 * time.Second)}
+	if scheduleIsDue(item, completedRun.EndedAt.Add(time.Minute), completedRun, true) {
+		t.Fatal("schedule caught up another interval immediately after a completed run")
+	}
 }
 
-func TestDailyScheduleDueUsesPollingWindow(t *testing.T) {
+func TestDailyScheduleDueUsesCandidateAndLastRun(t *testing.T) {
 	item := domain.Schedule{
 		Mode:     domain.ScheduleDaily,
 		Times:    []string{"05:00"},
@@ -45,10 +48,19 @@ func TestDailyScheduleDueUsesPollingWindow(t *testing.T) {
 	}
 	candidate := time.Date(2026, time.September, 12, 5, 0, 0, 0, time.UTC)
 	if !scheduleIsDue(item, candidate.Add(30*time.Second), domain.RunResult{}, false) {
-		t.Fatal("daily schedule was not due inside the polling window")
+		t.Fatal("daily schedule was not due at the configured time")
 	}
-	if scheduleIsDue(item, candidate.Add(5*time.Minute), domain.RunResult{}, false) {
-		t.Fatal("missed daily occurrence was caught up outside the polling window")
+	if !scheduleIsDue(item, candidate.Add(5*time.Minute), domain.RunResult{}, false) {
+		t.Fatal("missed daily occurrence was not due after the configured time")
+	}
+
+	lastRunBeforeCandidate := domain.RunResult{EndedAt: candidate.Add(-time.Minute)}
+	if !scheduleIsDue(item, candidate.Add(5*time.Minute), lastRunBeforeCandidate, true) {
+		t.Fatal("daily occurrence was not due when the last run preceded today's candidate")
+	}
+	lastRunAfterCandidate := domain.RunResult{EndedAt: candidate.Add(time.Minute)}
+	if scheduleIsDue(item, candidate.Add(5*time.Minute), lastRunAfterCandidate, true) {
+		t.Fatal("daily occurrence ran again after today's candidate was already completed")
 	}
 }
 

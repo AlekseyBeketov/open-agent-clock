@@ -558,10 +558,10 @@ func scheduleIsDue(item domain.Schedule, now time.Time, lastRun domain.RunResult
 		if elapsed < interval {
 			return false
 		}
-		// LaunchAgent polls once per minute. Run only inside the first polling
-		// window after an aligned interval occurrence; older missed runs are
-		// skipped instead of being caught up immediately after resume/wake.
-		return elapsed%interval < time.Minute
+		// A delayed launch after sleep must still run the missed occurrence. The
+		// persisted completion time becomes the next anchor after this one run,
+		// so this does not catch up multiple backlog intervals.
+		return true
 	}
 	location, err := time.LoadLocation(item.Timezone)
 	if err != nil {
@@ -580,12 +580,10 @@ func scheduleIsDue(item domain.Schedule, now time.Time, lastRun domain.RunResult
 		if candidate.After(localNow) || (hasLastRun && !lastRun.EndedAt.Before(candidate)) {
 			continue
 		}
-		// Calendar triggers and timezone-mismatched daily schedules are
-		// evaluated through a one-minute tick. Do not catch up a calendar
-		// occurrence after the polling window has passed.
-		if localNow.Sub(candidate) <= time.Minute {
-			return true
-		}
+		// A delayed launch after sleep must still run today's missed calendar
+		// occurrence. The last completed run is checked against this candidate
+		// above, so only one occurrence can be selected for the invocation.
+		return true
 	}
 	return false
 }

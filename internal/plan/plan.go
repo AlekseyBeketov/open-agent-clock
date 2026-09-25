@@ -39,7 +39,7 @@ func ForBindingWithMode(binding domain.Binding, prompt string, devMode bool) (do
 		// Keep global flags before `exec`; only add `--ephemeral` when discovery
 		// confirmed that this installed Codex exposes the flag. The runner uses a
 		// temporary empty cwd, so Codex must not require a trusted git directory.
-		plan.Args = []string{"--ask-for-approval", "never", "exec"}
+		plan.Args = []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="minimal"`, "exec"}
 		if binding.Supports(domain.CapabilityEphemeral) {
 			plan.Args = append(plan.Args, "--ephemeral")
 		}

@@ -8,15 +8,15 @@ if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
   exit 0
 fi
 if [ "$1" = "--ask-for-approval" ]; then
-  if [ "$2" != "never" ] || [ "$3" != "exec" ] || [ "$4" != "--ephemeral" ] || [ "$5" != "--sandbox" ] || [ "$6" != "read-only" ] || [ "$7" != "--skip-git-repo-check" ]; then
+  if [ "$2" != "never" ] || [ "$3" != "--model" ] || [ "$4" != "gpt-6-luna" ] || [ "$5" != "--config" ] || [ "$6" != 'model_reasoning_effort="minimal"' ] || [ "$7" != "exec" ] || [ "$8" != "--ephemeral" ] || [ "$9" != "--sandbox" ] || [ "${10}" != "read-only" ] || [ "${11}" != "--skip-git-repo-check" ]; then
     printf 'unexpected native Codex arguments\n' >&2
     exit 64
   fi
   case "${FAKE_PROVIDER_SCENARIO-}" in
     success-usage)
-      if [ "$8" = "--json" ] && [ -n "$9" ]; then
+      if [ "${12}" = "--json" ] && [ -n "${13}" ]; then
         printf '{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":5,"output_tokens":7,"total_tokens":18}}\n'
-      elif [ -n "$8" ] && [ -z "$9" ]; then
+      elif [ -n "${12}" ] && [ -z "${13}" ]; then
         printf 'fake native Codex completed\n'
       else
         printf 'unexpected native Codex dev arguments\n' >&2
@@ -49,7 +49,7 @@ if [ "$1" = "--ask-for-approval" ]; then
       exit 1
       ;;
   esac
-  if [ -n "$8" ] && [ -z "$9" ]; then
+  if [ -n "${12}" ] && [ -z "${13}" ]; then
     printf 'fake native Codex completed\n'
     exit 0
   fi
