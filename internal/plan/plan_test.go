@@ -17,7 +17,7 @@ func TestNativeCodexPlanIsMinimalAndEphemeral(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="minimal"`, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "hi"}
+	expected := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="low"`, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "hi"}
 	if !reflect.DeepEqual(result.Args, expected) {
 		t.Fatalf("unexpected native args: %#v", result.Args)
 	}
@@ -36,7 +36,7 @@ func TestNativeCodexDevPlanAddsJSONAfterTrustedDirectoryFix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="minimal"`, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--json", "hi"}
+	expected := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="low"`, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--json", "hi"}
 	if !reflect.DeepEqual(result.Args, expected) {
 		t.Fatalf("unexpected native dev args: %#v", result.Args)
 	}
@@ -51,7 +51,7 @@ func TestNativeCodexPlanOmitsUnsupportedEphemeralFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="minimal"`, "exec", "--sandbox", "read-only", "--skip-git-repo-check", "hi"}
+	expected := []string{"--ask-for-approval", "never", "--model", "gpt-6-luna", "--config", `model_reasoning_effort="low"`, "exec", "--sandbox", "read-only", "--skip-git-repo-check", "hi"}
 	if !reflect.DeepEqual(result.Args, expected) {
 		t.Fatalf("unexpected non-interactive native args: %#v", result.Args)
 	}

@@ -21,6 +21,6 @@ This file records possible future work. Nothing here is scheduled for implementa
 - **Token Reduction Strategy**: Implement a `minimal-context` mode for scheduled runs to reduce input tokens. This should include:
     - Disabling user-level MCP servers (`-c mcp_servers.<name>.enabled=false`).
     - Ignoring user and project rules (`--ignore-user-config`, `--ignore-rules`).
-    - Setting `model_reasoning_effort` to `minimal` and `model_verbosity` to `low`.
+    - Setting `model_reasoning_effort` to `low` and `model_verbosity` to `low`.
     - Continuing to use `--ephemeral` and `--skip-git-repo-check`.
 

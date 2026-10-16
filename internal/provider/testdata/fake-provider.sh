@@ -8,7 +8,7 @@ if [ "$1" = "exec" ] && [ "$2" = "--help" ]; then
   exit 0
 fi
 if [ "$1" = "--ask-for-approval" ]; then
-  if [ "$2" != "never" ] || [ "$3" != "--model" ] || [ "$4" != "gpt-6-luna" ] || [ "$5" != "--config" ] || [ "$6" != 'model_reasoning_effort="minimal"' ] || [ "$7" != "exec" ] || [ "$8" != "--ephemeral" ] || [ "$9" != "--sandbox" ] || [ "${10}" != "read-only" ] || [ "${11}" != "--skip-git-repo-check" ]; then
+  if [ "$2" != "never" ] || [ "$3" != "--model" ] || [ "$4" != "gpt-6-luna" ] || [ "$5" != "--config" ] || [ "$6" != 'model_reasoning_effort="low"' ] || [ "$7" != "exec" ] || [ "$8" != "--ephemeral" ] || [ "$9" != "--sandbox" ] || [ "${10}" != "read-only" ] || [ "${11}" != "--skip-git-repo-check" ]; then
     printf 'unexpected native Codex arguments\n' >&2
     exit 64
   fi
